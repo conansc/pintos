@@ -303,7 +303,7 @@ list_size (struct list *list)
 
   for (e = list_begin (list); e != list_end (list); e = list_next (e)) 
 	{
-		msg("List: In list %i", e);
+		//msg("List: In list %i", e);
 		cnt++;
 	}
  	

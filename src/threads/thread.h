@@ -4,7 +4,10 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
-#include <inttypes.h>	
+#include <inttypes.h>
+#include "filesys/file.h"
+#include "filesys/filesys.h"
+#include "threads/synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -89,6 +92,7 @@ struct thread
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
+		int fd;															/* File index (greater as 1) */
     int64_t wake_up_tick;				/* Tick on which the thread should wake up again */
     struct list_elem allelem;           /* List element for all threads list. */
     struct list_elem waitelem;			/* List element for wait threads list. */
@@ -103,7 +107,67 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
+
+    /* Defines the thread parent by whom the thread was created */
+    tid_t parent_thread_tid;
+    struct thread * parent_thread_ptr;
+
+		/* The file containing the instructions of the thread (write-protected) */
+		struct file* self_file;
+
+    /* A list of all files that are opened by the thread */
+	  struct list files_list;
+
+    /* A list of all children threads of the current thread */
+    struct list children_list;
+
+    /* Pointer to child struct of current thread */
+    struct child * own_child_struct;
+
+    /* Used to synchronize the waiting of a parent for a child to exit */
+	  struct semaphore sema_waiting;
+
+    /* Used to synchronize the waiting of a parent for a child to start */
+    struct semaphore sema_starting;
+
   };
+
+/* This is the struct that represents the child element for a thread.
+   Every thread has one of this element. It contains further important information
+   about the thread that are important for the parent thread.
+   It also has the list element that is pushed into the
+   parents chlidren list, so that a parent knows which children it has.*/
+struct child
+	{
+    /* The thread id that identifies the thread */
+		tid_t tid;
+    /* Indicates if the thread already exited */
+		bool is_exited;
+    /* Holds the exit status of the thread, if it already exited */
+		int exit_status;
+    /* Indicates if the parent is waiting on this thread */
+		bool someone_waiting;
+    /* Holds the loading status of the thread,
+       i.e. while it is not started its 0. A successful started
+       sets it to 1, otherwise -1. */
+		int loading_status;
+    /* List element that is pushed into the children list of the parent thread */
+	  struct list_elem elem;
+	};
+
+/* This struct is used by the OS to handle files. It contains a file 
+	 descriptor fd, which is automatically incremented by each thread 
+	 when it adds a new file to the thread. Moreover, a pointer to the
+ 	 actual file as well as the list element of files list is stored. */
+struct thread_file
+{
+	/* File descriptor fd */
+	int fd;
+	/* Actual file */
+  struct file *file;
+	/* The list elem for files list */
+  struct list_elem elem;
+};
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -144,5 +208,11 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+bool thread_alive(tid_t tid);
+struct thread * get_thread(tid_t tid);
+
+void acquire_harddrive_access(void);
+void release_harddrive_access(void);
 
 #endif /* threads/thread.h */
