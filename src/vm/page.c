@@ -110,17 +110,17 @@ bool load_file(struct sup_page * sp)
      the frame. Fill up rest with zeroes. */
   if(sp->read_bytes > 0)
   {
-    acquire_harddrive_access();
+
     int bytes_read = file_read_at (sp->file, frame_addr, sp->read_bytes, sp->ofs);
     if (bytes_read != (int) sp->read_bytes)
     {
-      release_harddrive_access();
+
       frame_deallocate(frame_addr);
       return false;
     }
 
     memset((char*)frame_addr + bytes_read, 0, sp->zero_bytes);
-    release_harddrive_access();
+
   }
 
   /* Tell the OS about the mapping from virtual address to frame address */
@@ -282,9 +282,9 @@ bool remove_mmap_sup_page(struct hash * spt, void * virt_addr)
     bool is_dirty = pagedir_is_dirty(curr_thread->pagedir, sp->virt_addr);
     if(is_dirty)
     {
-      acquire_harddrive_access();
+
       file_write_at(sp->file, sp->virt_addr, sp->read_bytes, sp->ofs);
-  		release_harddrive_access();
+
     }
 
     void * curr_frame = pagedir_get_page(curr_thread->pagedir, sp->virt_addr);

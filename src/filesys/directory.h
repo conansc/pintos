@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "devices/block.h"
+#include "threads/thread.h"
+#include "threads/synch.h"
 
 /* Maximum length of a file name component.
    This is the traditional UNIX maximum length.
@@ -12,6 +14,22 @@
 #define NAME_MAX 14
 
 struct inode;
+
+/* A directory. */
+struct dir
+  {
+    struct inode *inode;                /* Backing store. */
+    off_t pos;                          /* Current position. */
+    struct lock lock;                   /* Lock for the access to dir struct */
+  };
+
+/* A single directory entry. */
+struct dir_entry
+  {
+    block_sector_t inode_sector;        /* Sector number of header. */
+    char name[NAME_MAX + 1];            /* Null terminated file name. */
+    bool in_use;                        /* In use or free? */
+  };
 
 /* Opening and closing directories. */
 bool dir_create (block_sector_t sector, size_t entry_cnt);
@@ -22,9 +40,12 @@ void dir_close (struct dir *);
 struct inode *dir_get_inode (struct dir *);
 
 /* Reading and writing. */
-bool dir_lookup (const struct dir *, const char *name, struct inode **);
-bool dir_add (struct dir *, const char *name, block_sector_t);
-bool dir_remove (struct dir *, const char *name);
+bool dir_lookup (struct dir *, const char *, struct inode **);
+bool dir_add (struct dir *, const char *, block_sector_t);
+bool dir_remove (struct dir *, const char *);
 bool dir_readdir (struct dir *, char name[NAME_MAX + 1]);
+bool dir_parent(struct dir *dir, struct inode **);
+bool dir_check_root(struct dir *);
+bool dir_empty (struct inode *);
 
 #endif /* filesys/directory.h */

@@ -9,6 +9,7 @@
 #include "vm/page.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
+#include "filesys/directory.h"
 
 
 /* States in a thread's life cycle. */
@@ -111,6 +112,8 @@ struct thread
     uint32_t *pagedir;                  /* Page directory. */
 #endif
 
+    struct dir *cwd;
+
     /* Defines the thread parent by whom the thread was created */
     tid_t parent_thread_tid;
     struct thread * parent_thread_ptr;
@@ -180,6 +183,10 @@ struct thread_file
 	int fd;
 	/* Actual file */
   struct file *file;
+  /* Actual directory */
+  struct dir *dir;
+  /* Directory bool */
+  bool is_dir;
 	/* The list elem for files list */
   struct list_elem elem;
 };

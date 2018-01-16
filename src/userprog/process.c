@@ -79,6 +79,10 @@ start_process (void *file_name_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp, &save_ptr);
 
+  /* Check the cwd, if its NULL set it to root */
+  if (thread_current()->cwd == NULL)
+    thread_current()->cwd = dir_open_root();
+
   /* If load failed, quit. */
   palloc_free_page (file_name);
   struct thread * curr_thread = thread_current();
@@ -176,11 +180,16 @@ process_exit (void)
 		 Close all other thread files of the thread. */
   if(thread_current()->self_file != NULL)
   {
-    acquire_harddrive_access();
+
     file_allow_write(thread_current()->self_file);
   	file_close(thread_current()->self_file);
     close_all_thread_files();
-  	release_harddrive_access();
+
+  }
+
+  if(thread_current()->cwd != NULL)
+  {
+    dir_close(thread_current()->cwd);
   }
 
 	/* Remove and free the resources of all children of current process. */
@@ -346,7 +355,7 @@ load (const char *file_name, void (**eip) (void), void **esp, char **save_ptr)
     goto done;
   process_activate ();
 
-	acquire_harddrive_access();
+
 
   /* Open executable file. */
   file = filesys_open (file_name);
@@ -444,7 +453,7 @@ load (const char *file_name, void (**eip) (void), void **esp, char **save_ptr)
 
  done:
   /* We arrive here whether the load is successful or not. */
-  release_harddrive_access();
+
   return success;
 }
 
@@ -615,7 +624,7 @@ setup_stack (void **esp, const char* file_name, char** save_ptr)
 	memcpy(*esp, &argv[argc], sizeof(void*));
 
 	free(argv);
-//  printf("%i DSFOISDJFOI 22222\n", thread_current()->tid);
+
   return success;
 }
 

@@ -37,8 +37,15 @@ void sys_close(int);
 void close_single_thread_file(int);
 void close_all_thread_files(void);
 int add_file_to_process(struct file *);
+int add_dir_to_process(struct dir *);
 mmapid_t sys_mmap(int, void *);
 void sys_munmap(mmapid_t);
+void sys_munmap(mmapid_t);
+bool sys_chdir(const char *);
+bool sys_mkdir(const char *);
+bool sys_readdir(int, const char *);
+bool sys_isdir(int);
+int sys_inumber(int);
 
 
 #endif /* userprog/syscall.h */

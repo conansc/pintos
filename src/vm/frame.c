@@ -230,9 +230,9 @@ bool try_evict(struct frame * curr_frame)
        this is different for MMAP than for FILE as type. */
       if(pagedir_is_dirty(curr_frame->sp->allocating_thread->pagedir, curr_frame->sp->virt_addr))
       {
-        acquire_harddrive_access();
+
         file_write_at(curr_frame->sp->file, curr_frame->frame_addr, curr_frame->sp->read_bytes, curr_frame->sp->ofs);
-        release_harddrive_access();
+        
       }
       break;
     case STACK:

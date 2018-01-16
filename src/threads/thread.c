@@ -42,8 +42,6 @@ static struct thread *initial_thread;
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
 
-/* Lock used as mutual exclusion for the harddrive access */
-struct lock harddrive_access;
 
 /* Stack frame for kernel_thread(). */
 struct kernel_thread_frame
@@ -102,7 +100,7 @@ thread_init (void)
   list_init (&wait_list);
   list_init (&all_list);
 
-	lock_init(&harddrive_access);
+
 
   /* Initialize frame table */
   frame_table_init();
@@ -112,6 +110,7 @@ thread_init (void)
   init_thread (initial_thread, "main", PRI_DEFAULT);
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid ();
+  initial_thread->cwd = NULL;
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -239,6 +238,12 @@ thread_create (const char *name, int priority,
   created_child->is_exited = false;
 
   list_push_back(&curr_thread->children_list, &created_child->elem);
+
+  /* Set cwd */
+  if (thread_current()->cwd != NULL)
+    t->cwd = dir_reopen(thread_current()->cwd);
+  else
+    t->cwd = NULL;
 
   /* Create and intialize the supplemental page table */
   sup_page_table_init(&t->spt);
@@ -728,16 +733,4 @@ struct thread * get_thread(tid_t tid)
       return t;
   }
   return NULL;
-}
-
-/* Acquires the harddrive lock */
-void acquire_harddrive_access()
-{
-	lock_acquire(&harddrive_access);
-}
-
-/* Releases the harddrive lock */
-void release_harddrive_access()
-{
-	lock_release(&harddrive_access);
 }
