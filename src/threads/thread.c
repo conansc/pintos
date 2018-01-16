@@ -12,9 +12,8 @@
 #include "threads/synch.h"
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
-#ifdef USERPROG
 #include "userprog/process.h"
-#endif
+#include "vm/frame.h"
 
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
@@ -104,6 +103,9 @@ thread_init (void)
   list_init (&all_list);
 
 	lock_init(&harddrive_access);
+
+  /* Initialize frame table */
+  frame_table_init();
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -238,10 +240,14 @@ thread_create (const char *name, int priority,
 
   list_push_back(&curr_thread->children_list, &created_child->elem);
 
+  /* Create and intialize the supplemental page table */
+  sup_page_table_init(&t->spt);
+
   /* Add to run queue. */
   thread_unblock (t);
 
   return tid;
+
 }
 
 /* Puts the current thread to sleep.  It will not be scheduled
@@ -571,6 +577,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->magic = THREAD_MAGIC;
 	t->fd = 2;
 	t->self_file = NULL;
+  t->mmap_counter = 0;
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
@@ -578,6 +585,7 @@ init_thread (struct thread *t, const char *name, int priority)
 
 	list_init(&t->files_list);
 	list_init(&t->children_list);
+  list_init(&t->mmaps_list);
 	sema_init(&t->sema_waiting, 0);
   sema_init(&t->sema_starting, 0);
 }

@@ -5,9 +5,11 @@
 #include <list.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include "threads/synch.h"
+#include "vm/page.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
-#include "threads/synch.h"
+
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -17,6 +19,9 @@ enum thread_status
     THREAD_BLOCKED,     /* Waiting for an event to trigger. */
     THREAD_DYING        /* About to be destroyed. */
   };
+
+/* Identifier for a memory mapping */
+typedef int mmapid_t;
 
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
@@ -91,6 +96,7 @@ struct thread
     enum thread_status status;          /* Thread state. */
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
+    uint8_t *curr_stack;                /* Saved stack pointer during user mode */
     int priority;                       /* Priority. */
 		int fd;															/* File index (greater as 1) */
     int64_t wake_up_tick;				/* Tick on which the thread should wake up again */
@@ -104,9 +110,6 @@ struct thread
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
 #endif
-
-    /* Owned by thread.c. */
-    unsigned magic;                     /* Detects stack overflow. */
 
     /* Defines the thread parent by whom the thread was created */
     tid_t parent_thread_tid;
@@ -130,6 +133,18 @@ struct thread
     /* Used to synchronize the waiting of a parent for a child to start */
     struct semaphore sema_starting;
 
+    /* Hash table that holds the supplemental pages for this thread */
+    struct hash spt;
+
+    /* A list of all mmap opened by the thread */
+    struct list mmaps_list;
+
+    /* Counter that is used to maintain the memory mapping ids */
+    int mmap_counter;
+
+    /* Owned by thread.c. */
+    unsigned magic;                     /* Detects stack overflow. */
+
   };
 
 /* This is the struct that represents the child element for a thread.
@@ -148,15 +163,15 @@ struct child
     /* Indicates if the parent is waiting on this thread */
 		bool someone_waiting;
     /* Holds the loading status of the thread,
-       i.e. while it is not started its 0. A successful started
+       i.e. while it is not started its 0. A successful start
        sets it to 1, otherwise -1. */
 		int loading_status;
     /* List element that is pushed into the children list of the parent thread */
 	  struct list_elem elem;
 	};
 
-/* This struct is used by the OS to handle files. It contains a file 
-	 descriptor fd, which is automatically incremented by each thread 
+/* This struct is used by the OS to handle files. It contains a file
+	 descriptor fd, which is automatically incremented by each thread
 	 when it adds a new file to the thread. Moreover, a pointer to the
  	 actual file as well as the list element of files list is stored. */
 struct thread_file
@@ -166,6 +181,23 @@ struct thread_file
 	/* Actual file */
   struct file *file;
 	/* The list elem for files list */
+  struct list_elem elem;
+};
+
+/* This struct is used to handle memory mappings. It represents a
+   memory mapping and holds the specific information for the mapping
+  (e.g. the mapped file and the virtual address where it is mapped on) */
+struct thread_mmap_file
+{
+  /* Identifier for the current mapping */
+  mmapid_t mmap_id;
+  /* The file that belongs to this mapping */
+  struct file * file;
+  /* The virtual address where the file is mapped on */
+  void * virt_addr;
+  /* The length of the mapped file */
+  int file_length;
+  /* The list element for the mapping list of the thread */
   struct list_elem elem;
 };
 

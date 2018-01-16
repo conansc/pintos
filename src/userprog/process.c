@@ -19,6 +19,8 @@
 #include "threads/vaddr.h"
 #include "lib/kernel/list.h"
 #include "threads/malloc.h"
+#include "vm/frame.h"
+#include "userprog/syscall.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp, char **);
@@ -32,25 +34,29 @@ static int DEFAULT_ARG_SIZE = 2;				/* Default argument size for stack setup */
 tid_t
 process_execute (const char *file_name)
 {
-  char *fn_copy;
+
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
+  char * fn_copy = palloc_get_page(0);
+  char * temp = palloc_get_page(0);
+  if (fn_copy == NULL || temp == NULL)
     return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
+  strlcpy(fn_copy, file_name, PGSIZE);
+  strlcpy(temp, file_name, PGSIZE);
 
 	/* Get pure file name from string */
-	char *save_ptr;
-	file_name = strtok_r((char *) file_name, " ", &save_ptr);
+	char * save_ptr;
+	temp = strtok_r((char *) temp, " ", &save_ptr);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (temp, PRI_DEFAULT, start_process, fn_copy);
+  palloc_free_page(temp);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy);
   return tid;
+
 }
 
 /* A thread function that loads a user process and starts it
@@ -163,15 +169,19 @@ process_wait (tid_t child_tid)
 void
 process_exit (void)
 {
-  struct thread *cur = thread_current ();
+  struct thread * cur = thread_current ();
   uint32_t *pd;
 
 	/* Close the executable file of the current thread (this will also make it writeable again).
 		 Close all other thread files of the thread. */
-	acquire_harddrive_access();
-	file_close(thread_current()->self_file);
-  close_all_thread_files();
-	release_harddrive_access();
+  if(thread_current()->self_file != NULL)
+  {
+    acquire_harddrive_access();
+    file_allow_write(thread_current()->self_file);
+  	file_close(thread_current()->self_file);
+    close_all_thread_files();
+  	release_harddrive_access();
+  }
 
 	/* Remove and free the resources of all children of current process. */
   if(!list_empty(&cur->children_list))
@@ -188,6 +198,14 @@ process_exit (void)
     }
   }
 
+  /* Remove all mappings from the thread */
+  struct list * mmaps_list = &cur->mmaps_list;
+  while (!list_empty(mmaps_list)) {
+    struct list_elem * e = list_begin (mmaps_list);
+    struct thread_mmap_file * mf = list_entry(e, struct thread_mmap_file, elem);
+    sys_munmap(mf->mmap_id);
+  }
+
   /* If parent of the current thread is alive, store in the child
      struct the the current thread exited. Additionally, if the parent
      is waiting on the current thread signalize that it exited. If
@@ -199,6 +217,10 @@ process_exit (void)
     if(cur->own_child_struct->someone_waiting)
       sema_up(&cur->parent_thread_ptr->sema_waiting);
   }
+
+  /* Free allocated resources for supplemental page table.
+     Also frees frames if needed. */
+  sup_page_table_free(&cur->spt);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -428,8 +450,6 @@ load (const char *file_name, void (**eip) (void), void **esp, char **save_ptr)
 
 /* load() helpers. */
 
-static bool install_page (void *upage, void *kpage, bool writable);
-
 /* Checks whether PHDR describes a valid, loadable segment in
    FILE and returns true if so, false otherwise. */
 static bool
@@ -498,6 +518,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT (ofs % PGSIZE == 0);
 
   file_seek (file, ofs);
+  struct thread * curr_thread = thread_current();
   while (read_bytes > 0 || zero_bytes > 0)
     {
       /* Calculate how to fill this page.
@@ -506,30 +527,14 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-      /* Get a page of memory. */
-      uint8_t *kpage = palloc_get_page (PAL_USER);
-      if (kpage == NULL)
+      bool created_page = create_file_sup_page(&curr_thread->spt, upage, file, ofs, page_read_bytes, page_zero_bytes, writable);
+      if(!created_page)
         return false;
 
-      /* Load this page. */
-      if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
-        {
-          palloc_free_page (kpage);
-          return false;
-        }
-      memset (kpage + page_read_bytes, 0, page_zero_bytes);
-
-      /* Add the page to the process's address space. */
-      if (!install_page (upage, kpage, writable))
-        {
-          palloc_free_page (kpage);
-          return false;
-        }
-
-      /* Advance. */
       read_bytes -= page_read_bytes;
       zero_bytes -= page_zero_bytes;
       upage += PGSIZE;
+      ofs += PGSIZE;
     }
   return true;
 }
@@ -539,26 +544,21 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack (void **esp, const char* file_name, char** save_ptr)
 {
-  uint8_t *kpage;
-  bool success = false;
 
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-  if (kpage != NULL)
-    {
-      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success)
-        *esp = PHYS_BASE;
-      else
-			{
-        palloc_free_page (kpage);
-				return success;
-			}
-    }
+  /* Create first page for the stack by extending it. */
+  bool success = try_extend_stack(PHYS_BASE - 1, PHYS_BASE, false);
+  if(!success)
+    return false;
+
+  /* Load recently created stack page directly since this is not lazily loaded(see 4.3.3) */
+  load_page(&thread_current()->spt, PHYS_BASE - 1, true);
+
+  *esp = PHYS_BASE;
 
   char *token;																						/* Token to iterate through the filename string */
 	char **argv = malloc(DEFAULT_ARG_SIZE*sizeof(char *));	/* Pointer to the beginning of the stack */
 	unsigned int argc = 0;																	/* Number of command line arguments, init as 0 */
-	int argv_size = DEFAULT_ARG_SIZE;													/* Size of argv, is dynamically increased if needed */
+	unsigned int argv_size = DEFAULT_ARG_SIZE;													/* Size of argv, is dynamically increased if needed */
 
 	/* Iterate over the file string and parse single arguments,
 		 decrease the esp and write the argument to the stack */
@@ -615,7 +615,7 @@ setup_stack (void **esp, const char* file_name, char** save_ptr)
 	memcpy(*esp, &argv[argc], sizeof(void*));
 
 	free(argv);
-
+//  printf("%i DSFOISDJFOI 22222\n", thread_current()->tid);
   return success;
 }
 
@@ -628,8 +628,7 @@ setup_stack (void **esp, const char* file_name, char** save_ptr)
    with palloc_get_page().
    Returns true on success, false if UPAGE is already mapped or
    if memory allocation fails. */
-static bool
-install_page (void *upage, void *kpage, bool writable)
+bool install_page (void *upage, void *kpage, bool writable)
 {
   struct thread *t = thread_current ();
 
@@ -637,4 +636,22 @@ install_page (void *upage, void *kpage, bool writable)
      address, then map our page there. */
   return (pagedir_get_page (t->pagedir, upage) == NULL
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
+}
+
+
+/* Gets thread file from current process given fd. */
+struct thread_file* get_file_from_process(int fd)
+{
+	struct thread* t = thread_current();
+
+	struct list_elem *e;
+  for (e = list_begin (&(t->files_list)); e != list_end (&(t->files_list)); e = list_next (e))
+  {
+			struct thread_file *f = list_entry (e, struct thread_file, elem);
+
+			if (f->fd == fd)
+				return f;
+	}
+
+	return NULL;
 }

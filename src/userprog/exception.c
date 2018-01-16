@@ -5,6 +5,7 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "userprog/syscall.h"
+#include "threads/vaddr.h"
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -28,7 +29,7 @@ static void page_fault (struct intr_frame *);
    Refer to [IA32-v3a] section 5.15 "Exception and Interrupt
    Reference" for a description of each of these exceptions. */
 void
-exception_init (void) 
+exception_init (void)
 {
   /* These exceptions can be raised explicitly by a user program,
      e.g. via the INT, INT3, INTO, and BOUND instructions.  Thus,
@@ -63,14 +64,14 @@ exception_init (void)
 
 /* Prints exception statistics. */
 void
-exception_print_stats (void) 
+exception_print_stats (void)
 {
   printf ("Exception: %lld page faults\n", page_fault_cnt);
 }
 
 /* Handler for an exception (probably) caused by a user process. */
 static void
-kill (struct intr_frame *f) 
+kill (struct intr_frame *f)
 {
   /* This interrupt is one (probably) caused by a user process.
      For example, the process might have tried to access unmapped
@@ -79,7 +80,7 @@ kill (struct intr_frame *f)
      the kernel.  Real Unix-like operating systems pass most
      exceptions back to the process via signals, but we don't
      implement them. */
-     
+
   /* The interrupt frame's code segment value tells us where the
      exception originated. */
   switch (f->cs)
@@ -92,7 +93,7 @@ kill (struct intr_frame *f)
       intr_dump_frame (f);
 
 			/* Call system call exit */
-      sys_exit(-1); 
+      sys_exit(-1);
 
     case SEL_KCSEG:
       /* Kernel's code segment, which indicates a kernel bug.
@@ -100,7 +101,7 @@ kill (struct intr_frame *f)
          may cause kernel exceptions--but they shouldn't arrive
          here.)  Panic the kernel to make the point.  */
       intr_dump_frame (f);
-      PANIC ("Kernel bug - unexpected interrupt in kernel"); 
+      PANIC ("Kernel bug - unexpected interrupt in kernel");
 
     default:
       /* Some other code segment?  Shouldn't happen.  Panic the
@@ -123,7 +124,7 @@ kill (struct intr_frame *f)
    description of "Interrupt 14--Page Fault Exception (#PF)" in
    [IA32-v3a] section 5.15 "Exception and Interrupt Reference". */
 static void
-page_fault (struct intr_frame *f) 
+page_fault (struct intr_frame *f)
 {
   bool not_present;  /* True: not-present page, false: writing r/o page. */
   bool write;        /* True: access was write, false: access was read. */
@@ -151,14 +152,44 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
-  /* To implement virtual memory, delete the rest of the function
-     body, and replace it with code that brings in the page to
-     which fault_addr refers. */
-  printf ("Page fault at %p: %s error %s page in %s context.\n",
-          fault_addr,
-          not_present ? "not present" : "rights violation",
-          write ? "writing" : "reading",
-          user ? "user" : "kernel");
-  kill (f);
-}
+  /* Get correct current stack pointer. If the page fault happened
+     in a user process we have to get the stack pointer that was
+     saved during the execution of the user process. Otherwise,
+     we can just take it as usual from the intr_frame. */
+  struct thread * curr_thread = thread_current();
+  void * curr_esp;
+  if(user)
+    curr_esp = f->esp;
+  else
+    curr_esp = curr_thread->curr_stack;
 
+  /* Check if fault address within outer stack boundaries
+     and address did not fault because of read-only access  */
+  bool loaded = false;
+  bool within_user_space = (fault_addr < PHYS_BASE) && (fault_addr >= (void*) 0x08048000);
+  if(within_user_space && not_present)
+  {
+    struct sup_page * sp = get_sup_page(&curr_thread->spt, fault_addr);
+    if(sp != NULL)
+      loaded = load_page(&curr_thread->spt, fault_addr, false);
+    else
+    {
+      bool extended = try_extend_stack(fault_addr, curr_esp, true);
+      if(extended)
+        loaded = load_page(&curr_thread->spt, fault_addr, false);
+    }
+
+  }
+
+  /* If page was not loaded or stack was not extended, kill process */
+  if(!loaded)
+  {
+    printf ("Page fault at %p: %s error %s page in %s context.\n",
+            fault_addr,
+            not_present ? "not present" : "rights violation",
+            write ? "writing" : "reading",
+            user ? "user" : "kernel");
+    kill (f);
+  }
+
+}
